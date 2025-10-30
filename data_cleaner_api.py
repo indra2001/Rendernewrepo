@@ -1,58 +1,67 @@
-# data_cleaner_api.py
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
-import pandas as pd
-import io
-import os
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import JSONResponse
+import polars as pl
+import tempfile
+import uuid
+from data_cleaner import DataCleaner
 
-app = FastAPI(title="data_cleaner_api")
+app = FastAPI(title="Data Cleaning API", version="1.0")
 
-# Try to import your cleaning function from data_cleaner.py
-try:
-    from data_cleaner import clean_dataframe  # <- change if different
-except Exception as e:
-    clean_dataframe = None
-    print("Warning: could not import clean_dataframe from data_cleaner.py:", e)
+# Temporary in-memory storage
+TEMP_STORE = {}
 
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "data_cleaner_api"}
+    return {"message": "Data Cleaning API is running successfully!"}
+
 
 @app.post("/clean")
-async def clean_csv(file: UploadFile = File(...)):
-    if file.content_type not in ("text/csv", "application/vnd.ms-excel"):
-        raise HTTPException(status_code=400, detail="Upload a CSV file.")
-    contents = await file.read()
+async def clean_file(file: UploadFile = File(...)):
+    """
+    Endpoint to clean uploaded CSV data using Polars LazyFrame.
+    Returns metadata and stores cleaned result temporarily in memory.
+    """
     try:
-        df = pd.read_csv(io.BytesIO(contents))
+        # Create a temporary file to save the upload
+        temp_input = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+        temp_input.write(await file.read())
+        temp_input.close()
+
+        # Clean data
+        cleaner = DataCleaner(temp_input.name)
+        cleaned_df = cleaner.clean()
+
+        # Store in memory
+        file_id = str(uuid.uuid4())
+        TEMP_STORE[file_id] = cleaned_df
+
+        # Return success response
+        return JSONResponse(
+            content={
+                "status": "success",
+                "file_id": file_id,
+                "rows": cleaned_df.shape[0],
+                "columns": cleaned_df.shape[1],
+                "message": "File cleaned and stored temporarily."
+            }
+        )
+
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
-    if clean_dataframe is None:
-        # fallback: simple trim headers and drop duplicates
-        df.columns = [c.strip() for c in df.columns.astype(str)]
-        df = df.drop_duplicates()
-    else:
-        # call user-defined cleaning logic
-        df = clean_dataframe(df)
 
-    buf = io.BytesIO()
-    df.to_csv(buf, index=False)
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="text/csv", headers={
-        "Content-Disposition": f"attachment; filename=cleaned_{file.filename}"
-    })
+@app.get("/result/{file_id}")
+def get_cleaned_result(file_id: str):
+    """
+    Retrieve cleaned dataset from temporary memory using file_id.
+    """
+    if file_id not in TEMP_STORE:
+        return JSONResponse(status_code=404, content={"error": "File ID not found"})
 
-# Optional: JSON contract endpoint for programmatic use
-@app.post("/clean/json")
-async def clean_json(payload: dict):
-    try:
-        df = pd.DataFrame(payload)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Bad JSON payload: {e}")
-    if clean_dataframe is not None:
-        df = clean_dataframe(df)
-    else:
-        df.columns = [c.strip() for c in df.columns.astype(str)]
-        df = df.drop_duplicates()
-    return JSONResponse(content={"rows": df.to_dict(orient="records")})
+    df = TEMP_STORE[file_id]
+    return JSONResponse(
+        content={
+            "columns": df.columns,
+            "preview": df.head(5).to_dicts()
+        }
+    )
