@@ -1,4 +1,7 @@
-fastapi
-uvicorn
-gunicorn
-requests
+fastapi>=0.70
+uvicorn>=0.18
+gunicorn>=20.1
+pandas>=1.4
+# polars if your data_cleaner depends on it
+polars>=0.16
+python-multipart  # for file uploads (fastapi dependency)
