@@ -1,0 +1,10 @@
+{
+  "na_tokens": ["", "na", "n/a", "-", "—", "nil", "null"],
+  "strip_whitespace": true,
+  "dedupe_headers": true,
+  "cast_numeric": ["revenue", "amount"],
+  "cast_bool": ["is_active"],
+  "date_cols": ["date"],
+  "date_formats": ["%Y-%m-%d", "%m/%d/%Y"],
+  "drop_duplicates": true
+}
